@@ -12,37 +12,16 @@
   <link rel="icon" type="image/png" href="favicon.png"/>
   <title>recording_then_upload</title>
   <link rel="manifest" href="manifest.json">
-  <!-- <style>
-    #video-container {
-      width: 100%;
-      height: 480px;
-      border: 2px solid black;
-      border-radius: 8px;
-      background-color: black;
-      position: relative; /* Ensure the container is positioned relative to its parent */
-      z-index: 1000; /* Ensure the container is above other elements */
-      overflow: hidden; /* Ensure content doesn't overflow outside the container */
-    }
-    video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover; /* Ensure video covers the container without distortion */
-    }
-    #timer-display {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      background: rgba(0, 0, 0, 0.5);
-      color: white;
-      padding: 5px;
-      border-radius: 5px;
-    }
-  </style> -->
-  
+
+  <!-- Include ffmpeg.wasm -->
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 </head>
 <body>
-  <!-- <div id="video-container"></div> -->
-  <!-- <script src="camera.js"></script> -->
+  <script>
+    if (!('SharedArrayBuffer' in window)) {
+      console.error('SharedArrayBuffer is not supported in this browser.');
+    }
+  </script>
   <script src="main.dart.js"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>

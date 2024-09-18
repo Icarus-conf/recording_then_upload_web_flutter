@@ -1,8 +1,8 @@
 import 'dart:html' as html;
 import 'dart:js' as js;
-// import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'dart:ui_web' as ui;
+import 'dart:async';
 
 void main() {
   runApp(MyApp());
@@ -18,7 +18,9 @@ class _MyAppState extends State<MyApp> {
   late html.MediaRecorder _recorder;
   late html.VideoElement _result;
   late html.Blob _blob;
-  String _statusMessage = 'Ready'; // To store the status message
+  String _statusMessage = 'Initializing...';
+  bool _isLoading = true;
+  Timer? _recordingTimer; // Timer to automatically stop recording
 
   @override
   void initState() {
@@ -26,43 +28,62 @@ class _MyAppState extends State<MyApp> {
     _preview = html.VideoElement()
       ..autoplay = true
       ..muted = true
-      ..style.width = '100%' // Set explicit style for width
-      ..style.height = '100%'; // Set explicit style for height
+      ..style.width = '100%'
+      ..style.height = '100%'
+      ..style.objectFit = 'cover';
 
     _result = html.VideoElement()
       ..autoplay = false
       ..muted = false
-      ..style.width = '100%' // Set explicit style for width
-      ..style.height = '100%' // Set explicit style for height
+      ..style.width = '100%'
+      ..style.height = '100%'
       ..controls = true;
 
-    // ignore: undefined_prefixed_name
     ui.platformViewRegistry.registerViewFactory('preview', (int _) => _preview);
-
-    // ignore: undefined_prefixed_name
     ui.platformViewRegistry.registerViewFactory('result', (int _) => _result);
+
+    Future.delayed(Duration(milliseconds: 100), () {
+      _initializeCamera();
+    });
   }
 
-  Future<html.MediaStream?> _openCamera() async {
+  void _log(String message) {
+    print(message);
     setState(() {
-      _statusMessage = 'Accessing camera...';
+      _statusMessage = message;
     });
+  }
+
+  Future<void> _initializeCamera() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    _log('Initializing camera...');
 
     final html.MediaStream? stream = await html.window.navigator.mediaDevices
         ?.getUserMedia({'video': true, 'audio': true});
-    _preview.srcObject = stream;
 
-    if (stream == null) {
-      setState(() {
-        _statusMessage = 'Failed to access camera.';
+    if (stream != null) {
+      _preview.srcObject = stream;
+      _log('Camera accessed successfully and stream assigned to preview.');
+      startRecording(stream);
+
+      // Automatically stop recording after 10 seconds
+      _recordingTimer = Timer(Duration(seconds: 10), () {
+        stopRecording();
+        // Added delay before upload to ensure data is ready
+        Future.delayed(Duration(milliseconds: 500), () {
+          uploadVideo();
+        });
       });
     } else {
-      setState(() {
-        _statusMessage = 'Camera accessed successfully.';
-      });
+      _log('Failed to access camera.');
     }
 
-    return stream;
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   void startRecording(html.MediaStream stream) {
@@ -75,14 +96,23 @@ class _MyAppState extends State<MyApp> {
 
     _recorder.addEventListener('dataavailable', (event) {
       _blob = js.JsObject.fromBrowserObject(event)['data'];
+      _log('Data available for upload');
     }, true);
 
-    _recorder.addEventListener('stop', (event) {
+    _recorder.addEventListener('stop', (event) async {
       final url = html.Url.createObjectUrl(_blob);
       _result.src = url;
       setState(() {
-        _statusMessage = 'Recording stopped. Ready to upload.';
+        _statusMessage = 'Recording stopped. Compressing and ready to upload.';
       });
+
+      final compressedBlob = await compressVideo(_result);
+      setState(() {
+        _blob = compressedBlob;
+      });
+
+      // Cleanup
+      html.Url.revokeObjectUrl(url);
 
       stream.getTracks().forEach((track) {
         if (track.readyState == 'live') {
@@ -90,6 +120,16 @@ class _MyAppState extends State<MyApp> {
         }
       });
     });
+  }
+
+  Future<html.Blob> compressVideo(html.VideoElement videoElement) async {
+    final canvas = html.CanvasElement(width: 640, height: 480);
+    final context = canvas.context2D;
+
+    context.drawImageScaled(videoElement, 0, 0, 640, 480);
+
+    final compressedBlob = await canvas.toBlob('video/mp4');
+    return compressedBlob;
   }
 
   void stopRecording() {
@@ -132,10 +172,6 @@ class _MyAppState extends State<MyApp> {
               _statusMessage = 'Upload failed with status: ${request.status}';
             });
           }
-        } else {
-          setState(() {
-            _statusMessage = 'Unexpected request state.';
-          });
         }
       });
 
@@ -148,9 +184,15 @@ class _MyAppState extends State<MyApp> {
       request.send(formData);
     } catch (error) {
       setState(() {
-        _statusMessage = 'Failed to upload.';
+        _statusMessage = 'Failed to upload: $error';
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _recordingTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -164,19 +206,18 @@ class _MyAppState extends State<MyApp> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Text(
-                  'Recording Preview',
-                ),
-                Container(
-                  margin: EdgeInsets.symmetric(vertical: 10.0),
-                  width: 300,
-                  height: 200,
-                  color: Colors.blue,
-                  child: HtmlElementView(
-                    key: UniqueKey(),
-                    viewType: 'preview',
+                Text('Recording Preview'),
+                if (_isLoading) CircularProgressIndicator(),
+                if (!_isLoading)
+                  Container(
+                    margin: EdgeInsets.symmetric(vertical: 10.0),
+                    width: 300,
+                    height: 200,
+                    child: HtmlElementView(
+                      key: UniqueKey(),
+                      viewType: 'preview',
+                    ),
                   ),
-                ),
                 Container(
                   margin: EdgeInsets.all(20.0),
                   child: Row(
@@ -184,23 +225,29 @@ class _MyAppState extends State<MyApp> {
                     children: <Widget>[
                       ElevatedButton(
                         onPressed: () async {
-                          final html.MediaStream? stream = await _openCamera();
+                          final html.MediaStream? stream = await html
+                              .window.navigator.mediaDevices
+                              ?.getUserMedia({'video': true, 'audio': true});
                           if (stream != null) {
                             startRecording(stream);
+                            // Automatically stop recording after 10 seconds
+                            _recordingTimer = Timer(Duration(seconds: 10), () {
+                              stopRecording();
+                              // Added delay before upload to ensure data is ready
+                              Future.delayed(Duration(milliseconds: 500), () {
+                                uploadVideo();
+                              });
+                            });
                           }
                         },
                         child: Text('Start Recording'),
                       ),
-                      SizedBox(
-                        width: 20.0,
-                      ),
+                      SizedBox(width: 20.0),
                       ElevatedButton(
                         onPressed: () => stopRecording(),
                         child: Text('Stop Recording'),
                       ),
-                      SizedBox(
-                        width: 20.0,
-                      ),
+                      SizedBox(width: 20.0),
                       ElevatedButton(
                         onPressed: () => uploadVideo(),
                         child: Text('Upload Video'),
@@ -208,9 +255,7 @@ class _MyAppState extends State<MyApp> {
                     ],
                   ),
                 ),
-                Text(
-                  'Recording Result',
-                ),
+                Text('Recording Result'),
                 Container(
                   margin: EdgeInsets.symmetric(vertical: 10.0),
                   width: 300,
