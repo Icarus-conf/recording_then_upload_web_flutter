@@ -158,7 +158,7 @@ class _MyAppState extends State<MyApp> {
 
       final request = html.HttpRequest();
       request.open('POST',
-          'https://hr.computerengine.net/EmpMobile/Jobs/SmartUpload/uploadexmple.asp',
+          '####URRLL',
           async: true);
 
       request.onLoadEnd.listen((_) {
